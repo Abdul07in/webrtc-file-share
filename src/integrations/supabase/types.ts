@@ -21,7 +21,9 @@ export type Database = {
           expires_at: string
           id: string
           offer: string
+          peer_public_key: string | null
           pin: string
+          public_key: string | null
         }
         Insert: {
           answer?: string | null
@@ -29,7 +31,9 @@ export type Database = {
           expires_at?: string
           id?: string
           offer: string
+          peer_public_key?: string | null
           pin: string
+          public_key?: string | null
         }
         Update: {
           answer?: string | null
@@ -37,7 +41,9 @@ export type Database = {
           expires_at?: string
           id?: string
           offer?: string
+          peer_public_key?: string | null
           pin?: string
+          public_key?: string | null
         }
         Relationships: []
       }
