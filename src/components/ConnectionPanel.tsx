@@ -1,85 +1,134 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Copy, Link2, Loader2, CheckCircle2 } from 'lucide-react';
+import { InputOTP, InputOTPGroup, InputOTPSlot } from '@/components/ui/input-otp';
+import { Link2, Loader2, Copy, CheckCircle2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { webrtc } from '@/lib/webrtc';
+import { supabase } from '@/integrations/supabase/client';
 
 interface ConnectionPanelProps {
   onConnected: () => void;
 }
 
-type ConnectionMode = 'idle' | 'creating' | 'joining' | 'waiting' | 'connecting';
+type ConnectionMode = 'idle' | 'creating' | 'waiting' | 'joining' | 'connecting';
+
+function generatePin(): string {
+  return Math.floor(100000 + Math.random() * 900000).toString();
+}
 
 export function ConnectionPanel({ onConnected }: ConnectionPanelProps) {
   const [mode, setMode] = useState<ConnectionMode>('idle');
-  const [offer, setOffer] = useState('');
-  const [answer, setAnswer] = useState('');
-  const [peerCode, setPeerCode] = useState('');
+  const [pin, setPin] = useState('');
+  const [myPin, setMyPin] = useState('');
   const [copied, setCopied] = useState(false);
 
   const handleCreateRoom = async () => {
     setMode('creating');
     try {
+      const newPin = generatePin();
       const offerCode = await webrtc.createOffer();
-      setOffer(offerCode);
+      
+      const { error } = await supabase
+        .from('rooms')
+        .insert({ pin: newPin, offer: offerCode });
+      
+      if (error) throw error;
+      
+      setMyPin(newPin);
       setMode('waiting');
       
       webrtc.onMessage((msg) => {
         if (msg.type === 'channelOpen') {
-          toast.success('Peer connected!');
+          toast.success('Connected!');
           onConnected();
         }
       });
     } catch (error) {
-      console.error('Failed to create offer:', error);
+      console.error('Failed to create room:', error);
       toast.error('Failed to create room');
       setMode('idle');
     }
   };
 
+  // Listen for answer updates when waiting
+  useEffect(() => {
+    if (mode !== 'waiting' || !myPin) return;
+
+    const channel = supabase
+      .channel('room-updates')
+      .on(
+        'postgres_changes',
+        {
+          event: 'UPDATE',
+          schema: 'public',
+          table: 'rooms',
+          filter: `pin=eq.${myPin}`,
+        },
+        async (payload) => {
+          const answer = payload.new.answer;
+          if (answer) {
+            try {
+              await webrtc.handleAnswer(answer);
+            } catch (error) {
+              console.error('Failed to handle answer:', error);
+              toast.error('Connection failed');
+            }
+          }
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [mode, myPin]);
+
   const handleJoinRoom = async () => {
-    if (!peerCode.trim()) {
-      toast.error('Please enter a connection code');
+    if (pin.length !== 6) {
+      toast.error('Please enter a 6-digit PIN');
       return;
     }
 
-    setMode('connecting');
+    setMode('joining');
     try {
-      const answerCode = await webrtc.handleOffer(peerCode);
-      setAnswer(answerCode);
+      const { data: room, error } = await supabase
+        .from('rooms')
+        .select('*')
+        .eq('pin', pin)
+        .maybeSingle();
+
+      if (error) throw error;
+      if (!room) {
+        toast.error('Room not found');
+        setMode('idle');
+        return;
+      }
+
+      setMode('connecting');
+      const answerCode = await webrtc.handleOffer(room.offer);
       
+      await supabase
+        .from('rooms')
+        .update({ answer: answerCode })
+        .eq('pin', pin);
+
       webrtc.onMessage((msg) => {
         if (msg.type === 'channelOpen') {
-          toast.success('Connected to peer!');
+          toast.success('Connected!');
           onConnected();
         }
       });
     } catch (error) {
       console.error('Failed to join:', error);
-      toast.error('Invalid connection code');
+      toast.error('Failed to join room');
       setMode('idle');
     }
   };
 
-  const handleAcceptAnswer = async () => {
-    if (!peerCode.trim()) {
-      toast.error('Please enter the answer code');
-      return;
-    }
-
-    try {
-      await webrtc.handleAnswer(peerCode);
-    } catch (error) {
-      console.error('Failed to accept answer:', error);
-      toast.error('Invalid answer code');
-    }
-  };
-
-  const copyToClipboard = (text: string) => {
-    navigator.clipboard.writeText(text);
+  const copyPin = () => {
+    navigator.clipboard.writeText(myPin);
     setCopied(true);
-    toast.success('Copied to clipboard');
+    toast.success('PIN copied!');
     setTimeout(() => setCopied(false), 2000);
   };
 
@@ -89,7 +138,7 @@ export function ConnectionPanel({ onConnected }: ConnectionPanelProps) {
         <h2 className="text-2xl font-semibold text-foreground mb-6 text-center">
           Start Transfer
         </h2>
-        <div className="space-y-4">
+        <div className="space-y-6">
           <Button
             onClick={handleCreateRoom}
             className="w-full h-14 text-lg bg-primary hover:bg-primary/90 text-primary-foreground glow-primary transition-all"
@@ -97,26 +146,37 @@ export function ConnectionPanel({ onConnected }: ConnectionPanelProps) {
             <Link2 className="w-5 h-5 mr-2" />
             Create Room
           </Button>
+          
           <div className="relative">
             <div className="absolute inset-0 flex items-center">
               <div className="w-full border-t border-border"></div>
             </div>
             <div className="relative flex justify-center text-sm">
-              <span className="px-4 bg-card text-muted-foreground">or</span>
+              <span className="px-4 bg-card text-muted-foreground">or join with PIN</span>
             </div>
           </div>
-          <div className="space-y-3">
-            <Input
-              placeholder="Enter connection code..."
-              value={peerCode}
-              onChange={(e) => setPeerCode(e.target.value)}
-              className="h-14 bg-secondary/50 border-border text-foreground placeholder:text-muted-foreground font-mono text-sm"
-            />
+          
+          <div className="flex flex-col items-center gap-4">
+            <InputOTP
+              maxLength={6}
+              value={pin}
+              onChange={setPin}
+            >
+              <InputOTPGroup>
+                <InputOTPSlot index={0} />
+                <InputOTPSlot index={1} />
+                <InputOTPSlot index={2} />
+                <InputOTPSlot index={3} />
+                <InputOTPSlot index={4} />
+                <InputOTPSlot index={5} />
+              </InputOTPGroup>
+            </InputOTP>
+            
             <Button
               onClick={handleJoinRoom}
               variant="secondary"
-              className="w-full h-14 text-lg"
-              disabled={!peerCode.trim()}
+              className="w-full h-12"
+              disabled={pin.length !== 6}
             >
               Join Room
             </Button>
@@ -126,86 +186,44 @@ export function ConnectionPanel({ onConnected }: ConnectionPanelProps) {
     );
   }
 
-  if (mode === 'creating') {
+  if (mode === 'creating' || mode === 'joining') {
     return (
       <div className="glass rounded-2xl p-8 max-w-md w-full mx-4 text-center">
         <Loader2 className="w-12 h-12 mx-auto mb-4 text-primary animate-spin" />
-        <p className="text-foreground">Creating room...</p>
+        <p className="text-foreground">
+          {mode === 'creating' ? 'Creating room...' : 'Joining room...'}
+        </p>
       </div>
     );
   }
 
   if (mode === 'waiting') {
     return (
-      <div className="glass rounded-2xl p-8 max-w-lg w-full mx-4">
-        <h2 className="text-xl font-semibold text-foreground mb-4">
-          Share this code with your peer
+      <div className="glass rounded-2xl p-8 max-w-md w-full mx-4 text-center">
+        <h2 className="text-xl font-semibold text-foreground mb-2">
+          Share this PIN
         </h2>
-        <div className="relative">
-          <div className="bg-secondary/50 rounded-lg p-4 pr-12 font-mono text-xs text-foreground break-all max-h-32 overflow-y-auto">
-            {offer}
-          </div>
-          <Button
-            size="icon"
-            variant="ghost"
-            className="absolute top-2 right-2"
-            onClick={() => copyToClipboard(offer)}
-          >
-            {copied ? (
-              <CheckCircle2 className="w-4 h-4 text-success" />
-            ) : (
-              <Copy className="w-4 h-4" />
-            )}
-          </Button>
+        <p className="text-sm text-muted-foreground mb-6">
+          Your peer needs to enter this PIN to connect
+        </p>
+        
+        <div 
+          onClick={copyPin}
+          className="inline-flex items-center gap-3 bg-secondary/50 rounded-xl px-6 py-4 cursor-pointer hover:bg-secondary/70 transition-colors"
+        >
+          <span className="text-4xl font-mono font-bold text-primary tracking-widest">
+            {myPin}
+          </span>
+          {copied ? (
+            <CheckCircle2 className="w-6 h-6 text-green-500" />
+          ) : (
+            <Copy className="w-6 h-6 text-muted-foreground" />
+          )}
         </div>
-        <div className="mt-6 space-y-3">
-          <p className="text-sm text-muted-foreground">
-            Paste the answer code from your peer:
-          </p>
-          <Input
-            placeholder="Answer code..."
-            value={peerCode}
-            onChange={(e) => setPeerCode(e.target.value)}
-            className="bg-secondary/50 border-border font-mono text-sm"
-          />
-          <Button
-            onClick={handleAcceptAnswer}
-            className="w-full bg-primary hover:bg-primary/90"
-            disabled={!peerCode.trim()}
-          >
-            Connect
-          </Button>
-        </div>
-      </div>
-    );
-  }
-
-  if (mode === 'connecting' && answer) {
-    return (
-      <div className="glass rounded-2xl p-8 max-w-lg w-full mx-4">
-        <h2 className="text-xl font-semibold text-foreground mb-4">
-          Send this answer code back
-        </h2>
-        <div className="relative">
-          <div className="bg-secondary/50 rounded-lg p-4 pr-12 font-mono text-xs text-foreground break-all max-h-32 overflow-y-auto">
-            {answer}
-          </div>
-          <Button
-            size="icon"
-            variant="ghost"
-            className="absolute top-2 right-2"
-            onClick={() => copyToClipboard(answer)}
-          >
-            {copied ? (
-              <CheckCircle2 className="w-4 h-4 text-success" />
-            ) : (
-              <Copy className="w-4 h-4" />
-            )}
-          </Button>
-        </div>
-        <div className="mt-4 flex items-center justify-center gap-2 text-muted-foreground">
+        
+        <div className="mt-8 flex items-center justify-center gap-2 text-muted-foreground">
           <Loader2 className="w-4 h-4 animate-spin" />
-          <span className="text-sm">Waiting for connection...</span>
+          <span className="text-sm">Waiting for peer...</span>
         </div>
       </div>
     );
