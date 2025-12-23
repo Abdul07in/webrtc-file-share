@@ -53,19 +53,16 @@ class WebRTCManager {
       { urls: 'stun:stun2.l.google.com:19302' },
       { urls: 'stun:stun3.l.google.com:19302' },
       { urls: 'stun:stun4.l.google.com:19302' },
-      // Free TURN servers from Open Relay Project for NAT traversal
+
+      // TURN relay (needed for many mobile-data / symmetric NAT scenarios)
+      // Note: public TURN is often unreliable; for production, use your own TURN provider.
       {
-        urls: 'turn:openrelay.metered.ca:80',
+        urls: ['turn:openrelay.metered.ca:80', 'turn:openrelay.metered.ca:443', 'turn:openrelay.metered.ca:443?transport=tcp'],
         username: 'openrelayproject',
         credential: 'openrelayproject',
       },
       {
-        urls: 'turn:openrelay.metered.ca:443',
-        username: 'openrelayproject',
-        credential: 'openrelayproject',
-      },
-      {
-        urls: 'turn:openrelay.metered.ca:443?transport=tcp',
+        urls: ['turns:openrelay.metered.ca:443', 'turns:openrelay.metered.ca:443?transport=tcp'],
         username: 'openrelayproject',
         credential: 'openrelayproject',
       },
@@ -162,29 +159,40 @@ class WebRTCManager {
     await this.peerConnection?.setRemoteDescription(answer);
   }
 
-  private waitForIceGathering(): Promise<void> {
+  private waitForIceGathering(timeoutMs: number = 20000): Promise<void> {
     return new Promise((resolve) => {
-      if (this.peerConnection?.iceGatheringState === 'complete') {
-        resolve();
-        return;
-      }
+      if (!this.peerConnection) return resolve();
+      if (this.peerConnection.iceGatheringState === 'complete') return resolve();
 
-      const checkState = () => {
+      const onStateChange = () => {
         if (this.peerConnection?.iceGatheringState === 'complete') {
-          this.peerConnection.removeEventListener('icegatheringstatechange', checkState);
+          this.peerConnection?.removeEventListener('icegatheringstatechange', onStateChange);
           resolve();
         }
       };
 
-      this.peerConnection?.addEventListener('icegatheringstatechange', checkState);
-      
-      // Timeout after 5 seconds
-      setTimeout(resolve, 5000);
+      this.peerConnection.addEventListener('icegatheringstatechange', onStateChange);
+
+      // Many relay candidates (TURN) can take longer than 5s to gather.
+      // We wait up to timeoutMs; if it still isn't complete, we proceed with what we have.
+      setTimeout(() => {
+        this.peerConnection?.removeEventListener('icegatheringstatechange', onStateChange);
+        resolve();
+      }, timeoutMs);
     });
   }
 
   private setupConnectionHandlers() {
     if (!this.peerConnection) return;
+
+    this.peerConnection.onicegatheringstatechange = () => {
+      console.log('ICE gathering state:', this.peerConnection?.iceGatheringState);
+    };
+
+    this.peerConnection.onicecandidateerror = (event) => {
+      console.warn('ICE candidate error:', event);
+      this.emit({ type: 'iceCandidateError', event });
+    };
 
     this.peerConnection.oniceconnectionstatechange = () => {
       const state = this.peerConnection?.iceConnectionState;
