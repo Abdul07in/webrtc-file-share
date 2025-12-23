@@ -1,11 +1,12 @@
 import { useState, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
 import { InputOTP, InputOTPGroup, InputOTPSlot } from '@/components/ui/input-otp';
-import { Link2, Loader2, Copy, CheckCircle2, Shield, QrCode } from 'lucide-react';
+import { Link2, Loader2, Copy, CheckCircle2, Shield, QrCode, ScanLine } from 'lucide-react';
 import { toast } from 'sonner';
 import { webrtc } from '@/lib/webrtc';
 import { supabase } from '@/integrations/supabase/client';
 import { QRCodeSVG } from 'qrcode.react';
+import { QRScanner } from './QRScanner';
 
 interface ConnectionPanelProps {
   onConnected: () => void;
@@ -24,6 +25,55 @@ export function ConnectionPanel({ onConnected }: ConnectionPanelProps) {
   const [myPublicKey, setMyPublicKey] = useState('');
   const [copied, setCopied] = useState(false);
   const [showQR, setShowQR] = useState(true);
+  const [showScanner, setShowScanner] = useState(false);
+
+  const handleJoinWithPin = async (joinPin: string) => {
+    if (joinPin.length !== 6) {
+      toast.error('Please enter a 6-digit PIN');
+      return;
+    }
+
+    setMode('joining');
+    try {
+      const { data: room, error } = await supabase
+        .from('rooms')
+        .select('*')
+        .eq('pin', joinPin)
+        .maybeSingle();
+
+      if (error) throw error;
+      if (!room) {
+        toast.error('Room not found');
+        setMode('idle');
+        return;
+      }
+
+      setMode('connecting');
+      const { answer, publicKey } = await webrtc.handleOffer(room.offer, (room as any).public_key);
+      
+      await supabase
+        .from('rooms')
+        .update({ answer: answer, peer_public_key: publicKey })
+        .eq('pin', joinPin);
+
+      webrtc.onMessage((msg) => {
+        if (msg.type === 'channelOpen') {
+          toast.success('Connected with E2E encryption!');
+          onConnected();
+        }
+      });
+    } catch (error) {
+      console.error('Failed to join:', error);
+      toast.error('Failed to join room');
+      setMode('idle');
+    }
+  };
+
+  const handleScannedPin = (scannedPin: string) => {
+    setShowScanner(false);
+    setPin(scannedPin);
+    handleJoinWithPin(scannedPin);
+  };
 
   const handleCreateRoom = async () => {
     setMode('creating');
@@ -87,47 +137,7 @@ export function ConnectionPanel({ onConnected }: ConnectionPanelProps) {
     };
   }, [mode, myPin]);
 
-  const handleJoinRoom = async () => {
-    if (pin.length !== 6) {
-      toast.error('Please enter a 6-digit PIN');
-      return;
-    }
-
-    setMode('joining');
-    try {
-      const { data: room, error } = await supabase
-        .from('rooms')
-        .select('*')
-        .eq('pin', pin)
-        .maybeSingle();
-
-      if (error) throw error;
-      if (!room) {
-        toast.error('Room not found');
-        setMode('idle');
-        return;
-      }
-
-      setMode('connecting');
-      const { answer, publicKey } = await webrtc.handleOffer(room.offer, (room as any).public_key);
-      
-      await supabase
-        .from('rooms')
-        .update({ answer: answer, peer_public_key: publicKey })
-        .eq('pin', pin);
-
-      webrtc.onMessage((msg) => {
-        if (msg.type === 'channelOpen') {
-          toast.success('Connected with E2E encryption!');
-          onConnected();
-        }
-      });
-    } catch (error) {
-      console.error('Failed to join:', error);
-      toast.error('Failed to join room');
-      setMode('idle');
-    }
-  };
+  const handleJoinRoom = () => handleJoinWithPin(pin);
 
   const copyPin = () => {
     navigator.clipboard.writeText(myPin);
@@ -141,59 +151,76 @@ export function ConnectionPanel({ onConnected }: ConnectionPanelProps) {
 
   if (mode === 'idle') {
     return (
-      <div className="glass rounded-2xl p-8 max-w-md w-full mx-4">
-        <h2 className="text-2xl font-semibold text-foreground mb-2 text-center">
-          Start Transfer
-        </h2>
-        <div className="flex items-center justify-center gap-2 mb-6">
-          <Shield className="w-4 h-4 text-success" />
-          <span className="text-sm text-muted-foreground">End-to-end encrypted</span>
-        </div>
-        <div className="space-y-6">
-          <Button
-            onClick={handleCreateRoom}
-            className="w-full h-14 text-lg bg-primary hover:bg-primary/90 text-primary-foreground glow-primary transition-all"
-          >
-            <Link2 className="w-5 h-5 mr-2" />
-            Create Room
-          </Button>
-          
-          <div className="relative">
-            <div className="absolute inset-0 flex items-center">
-              <div className="w-full border-t border-border"></div>
-            </div>
-            <div className="relative flex justify-center text-sm">
-              <span className="px-4 bg-card text-muted-foreground">or join with PIN</span>
-            </div>
+      <>
+        {showScanner && (
+          <QRScanner
+            onScan={handleScannedPin}
+            onClose={() => setShowScanner(false)}
+          />
+        )}
+        <div className="glass rounded-2xl p-8 max-w-md w-full mx-4">
+          <h2 className="text-2xl font-semibold text-foreground mb-2 text-center">
+            Start Transfer
+          </h2>
+          <div className="flex items-center justify-center gap-2 mb-6">
+            <Shield className="w-4 h-4 text-success" />
+            <span className="text-sm text-muted-foreground">End-to-end encrypted</span>
           </div>
-          
-          <div className="flex flex-col items-center gap-4">
-            <InputOTP
-              maxLength={6}
-              value={pin}
-              onChange={setPin}
-            >
-              <InputOTPGroup>
-                <InputOTPSlot index={0} />
-                <InputOTPSlot index={1} />
-                <InputOTPSlot index={2} />
-                <InputOTPSlot index={3} />
-                <InputOTPSlot index={4} />
-                <InputOTPSlot index={5} />
-              </InputOTPGroup>
-            </InputOTP>
-            
+          <div className="space-y-6">
             <Button
-              onClick={handleJoinRoom}
-              variant="secondary"
-              className="w-full h-12"
-              disabled={pin.length !== 6}
+              onClick={handleCreateRoom}
+              className="w-full h-14 text-lg bg-primary hover:bg-primary/90 text-primary-foreground glow-primary transition-all"
             >
-              Join Room
+              <Link2 className="w-5 h-5 mr-2" />
+              Create Room
             </Button>
+            
+            <div className="relative">
+              <div className="absolute inset-0 flex items-center">
+                <div className="w-full border-t border-border"></div>
+              </div>
+              <div className="relative flex justify-center text-sm">
+                <span className="px-4 bg-card text-muted-foreground">or join with PIN</span>
+              </div>
+            </div>
+            
+            <div className="flex flex-col items-center gap-4">
+              <InputOTP
+                maxLength={6}
+                value={pin}
+                onChange={setPin}
+              >
+                <InputOTPGroup>
+                  <InputOTPSlot index={0} />
+                  <InputOTPSlot index={1} />
+                  <InputOTPSlot index={2} />
+                  <InputOTPSlot index={3} />
+                  <InputOTPSlot index={4} />
+                  <InputOTPSlot index={5} />
+                </InputOTPGroup>
+              </InputOTP>
+              
+              <div className="flex gap-2 w-full">
+                <Button
+                  onClick={() => setShowScanner(true)}
+                  variant="outline"
+                  className="h-12 px-4"
+                >
+                  <ScanLine className="w-5 h-5" />
+                </Button>
+                <Button
+                  onClick={handleJoinRoom}
+                  variant="secondary"
+                  className="flex-1 h-12"
+                  disabled={pin.length !== 6}
+                >
+                  Join Room
+                </Button>
+              </div>
+            </div>
           </div>
         </div>
-      </div>
+      </>
     );
   }
 
