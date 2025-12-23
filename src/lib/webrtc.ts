@@ -39,7 +39,7 @@ class WebRTCManager {
   private fileHandlers: Set<FileHandler> = new Set();
   private receivedChunks: Map<string, Uint8Array[]> = new Map();
   private receivedMeta: Map<string, { name: string; size: number; type: string }> = new Map();
-  
+
   // Encryption
   private keyPair: EncryptionKeys | null = null;
   private sharedKey: CryptoKey | null = null;
@@ -47,14 +47,11 @@ class WebRTCManager {
 
   private config: RTCConfiguration = {
     iceServers: [
-      // Multiple STUN servers for better connectivity
+      // Primary STUN server (Google) - highly reliable
       { urls: 'stun:stun.l.google.com:19302' },
-      { urls: 'stun:stun1.l.google.com:19302' },
-      { urls: 'stun:stun2.l.google.com:19302' },
-      { urls: 'stun:stun3.l.google.com:19302' },
-      { urls: 'stun:stun4.l.google.com:19302' },
+
+      // Secondary STUN server (Twilio) - good fallback
       { urls: 'stun:global.stun.twilio.com:3478' },
-      { urls: 'stun:stun.relay.metered.ca:80' },
 
       // TURN relay servers from relay.metered.ca (free tier)
       {
@@ -104,7 +101,7 @@ class WebRTCManager {
     // Generate encryption keys
     this.keyPair = await generateKeyPair();
     const publicKeyStr = await exportPublicKey(this.keyPair.publicKey);
-    
+
     this.peerConnection = new RTCPeerConnection(this.config);
     this.setupConnectionHandlers();
 
@@ -128,15 +125,15 @@ class WebRTCManager {
 
   async handleOffer(encodedOffer: string, peerPublicKey: string): Promise<{ answer: string; publicKey: string }> {
     const offer = JSON.parse(atob(encodedOffer));
-    
+
     // Generate our keys and derive shared key
     this.keyPair = await generateKeyPair();
     const publicKeyStr = await exportPublicKey(this.keyPair.publicKey);
-    
+
     const peerKey = await importPublicKey(peerPublicKey);
     this.sharedKey = await deriveSharedKey(this.keyPair.privateKey, peerKey);
     this.isEncrypted = true;
-    
+
     this.peerConnection = new RTCPeerConnection(this.config);
     this.setupConnectionHandlers();
 
@@ -160,18 +157,18 @@ class WebRTCManager {
 
   async handleAnswer(encodedAnswer: string, peerPublicKey: string) {
     const answer = JSON.parse(atob(encodedAnswer));
-    
+
     // Derive shared key from peer's public key
     if (this.keyPair) {
       const peerKey = await importPublicKey(peerPublicKey);
       this.sharedKey = await deriveSharedKey(this.keyPair.privateKey, peerKey);
       this.isEncrypted = true;
     }
-    
+
     await this.peerConnection?.setRemoteDescription(answer);
   }
 
-  private waitForIceGathering(timeoutMs: number = 20000): Promise<void> {
+  private waitForIceGathering(timeoutMs: number = 4000): Promise<void> {
     return new Promise((resolve) => {
       if (!this.peerConnection) return resolve();
       if (this.peerConnection.iceGatheringState === 'complete') return resolve();
@@ -218,7 +215,7 @@ class WebRTCManager {
       const state = this.peerConnection?.iceConnectionState;
       console.log('ICE connection state:', state);
       this.emit({ type: 'connectionState', state });
-      
+
       // Attempt ICE restart on disconnection
       if (state === 'disconnected' || state === 'failed') {
         console.log('Attempting ICE restart...');
@@ -232,10 +229,10 @@ class WebRTCManager {
       this.emit({ type: 'connectionState', state });
     };
   }
-  
+
   private async attemptIceRestart() {
     if (!this.peerConnection) return;
-    
+
     try {
       const offer = await this.peerConnection.createOffer({ iceRestart: true });
       await this.peerConnection.setLocalDescription(offer);
@@ -271,7 +268,7 @@ class WebRTCManager {
   private async handleIncomingMessage(data: ArrayBuffer | string) {
     if (typeof data === 'string') {
       let message = JSON.parse(data);
-      
+
       // Decrypt metadata if encrypted
       if (message.encrypted && this.sharedKey) {
         try {
@@ -283,7 +280,7 @@ class WebRTCManager {
           console.error('Decryption error:', error);
         }
       }
-      
+
       if (message.type === 'file-meta') {
         this.receivedMeta.set(message.id, {
           name: message.name,
@@ -302,7 +299,7 @@ class WebRTCManager {
       } else if (message.type === 'file-complete') {
         const chunks = this.receivedChunks.get(message.id);
         const meta = this.receivedMeta.get(message.id);
-        
+
         if (chunks && meta) {
           const blobParts = chunks.map(chunk => chunk.buffer as ArrayBuffer);
           const blob = new Blob(blobParts, { type: meta.type });
@@ -327,14 +324,14 @@ class WebRTCManager {
       const idLength = view.getUint8(0);
       const decoder = new TextDecoder();
       const id = decoder.decode(new Uint8Array(data, 1, idLength));
-      
+
       let chunk: Uint8Array;
-      
+
       if (this.isEncrypted && this.sharedKey) {
         // Extract IV (12 bytes) and encrypted data
         const iv = new Uint8Array(data, 1 + idLength, 12);
         const encrypted = new Uint8Array(data, 1 + idLength + 12);
-        
+
         try {
           chunk = await decryptData(this.sharedKey, iv, encrypted);
         } catch (error) {
@@ -344,15 +341,15 @@ class WebRTCManager {
       } else {
         chunk = new Uint8Array(data, 1 + idLength);
       }
-      
+
       const chunks = this.receivedChunks.get(id);
       const meta = this.receivedMeta.get(id);
-      
+
       if (chunks && meta) {
         chunks.push(chunk);
         const received = chunks.reduce((acc, c) => acc + c.length, 0);
         const progress = Math.round((received / meta.size) * 100);
-        
+
         this.emitFile({
           id,
           name: meta.name,
@@ -371,7 +368,7 @@ class WebRTCManager {
     }
 
     const id = crypto.randomUUID();
-    
+
     // Send file metadata (encrypted if available)
     const meta: any = {
       type: 'file-meta',
@@ -381,29 +378,29 @@ class WebRTCManager {
       fileType: file.type,
       encrypted: this.isEncrypted,
     };
-    
+
     if (this.isEncrypted && this.sharedKey) {
       meta.name = await encryptString(this.sharedKey, file.name);
       meta.fileType = await encryptString(this.sharedKey, file.type);
     }
-    
+
     this.dataChannel.send(JSON.stringify(meta));
 
     // Read and send file in chunks
     const buffer = await file.arrayBuffer();
     const data = new Uint8Array(buffer);
     const idBytes = new TextEncoder().encode(id);
-    
+
     let offset = 0;
     while (offset < data.length) {
       const chunk = data.slice(offset, offset + CHUNK_SIZE);
-      
+
       let packet: Uint8Array;
-      
+
       if (this.isEncrypted && this.sharedKey) {
         // Encrypt the chunk
         const { iv, encrypted } = await encryptData(this.sharedKey, chunk);
-        
+
         // Create packet: idLength(1) + id + iv(12) + encrypted
         packet = new Uint8Array(1 + idBytes.length + 12 + encrypted.length);
         packet[0] = idBytes.length;
@@ -417,18 +414,18 @@ class WebRTCManager {
         packet.set(idBytes, 1);
         packet.set(chunk, 1 + idBytes.length);
       }
-      
+
       // Wait for buffer to clear if needed
       while (this.dataChannel.bufferedAmount > 1024 * 1024) {
         await new Promise(resolve => setTimeout(resolve, 10));
       }
-      
+
       // Create a proper ArrayBuffer copy to avoid SharedArrayBuffer type issues
       const packetBuffer = new ArrayBuffer(packet.length);
       new Uint8Array(packetBuffer).set(packet);
       this.dataChannel.send(packetBuffer);
       offset += CHUNK_SIZE;
-      
+
       const progress = Math.round((offset / data.length) * 100);
       this.emitFile({
         id,
@@ -461,7 +458,7 @@ class WebRTCManager {
   isConnected(): boolean {
     return this.dataChannel?.readyState === 'open';
   }
-  
+
   isEncryptionEnabled(): boolean {
     return this.isEncrypted;
   }
