@@ -53,21 +53,33 @@ class WebRTCManager {
       { urls: 'stun:stun2.l.google.com:19302' },
       { urls: 'stun:stun3.l.google.com:19302' },
       { urls: 'stun:stun4.l.google.com:19302' },
+      { urls: 'stun:global.stun.twilio.com:3478' },
+      { urls: 'stun:stun.relay.metered.ca:80' },
 
-      // TURN relay (needed for many mobile-data / symmetric NAT scenarios)
-      // Note: public TURN is often unreliable; for production, use your own TURN provider.
+      // TURN relay servers from relay.metered.ca (free tier)
       {
-        urls: ['turn:openrelay.metered.ca:80', 'turn:openrelay.metered.ca:443', 'turn:openrelay.metered.ca:443?transport=tcp'],
-        username: 'openrelayproject',
-        credential: 'openrelayproject',
+        urls: 'turn:global.relay.metered.ca:80',
+        username: 'e8dd65b92f6ec01bf7e7c5a3',
+        credential: 'uWdEMvEiz+qsS3V2',
       },
       {
-        urls: ['turns:openrelay.metered.ca:443', 'turns:openrelay.metered.ca:443?transport=tcp'],
-        username: 'openrelayproject',
-        credential: 'openrelayproject',
+        urls: 'turn:global.relay.metered.ca:80?transport=tcp',
+        username: 'e8dd65b92f6ec01bf7e7c5a3',
+        credential: 'uWdEMvEiz+qsS3V2',
+      },
+      {
+        urls: 'turn:global.relay.metered.ca:443',
+        username: 'e8dd65b92f6ec01bf7e7c5a3',
+        credential: 'uWdEMvEiz+qsS3V2',
+      },
+      {
+        urls: 'turns:global.relay.metered.ca:443?transport=tcp',
+        username: 'e8dd65b92f6ec01bf7e7c5a3',
+        credential: 'uWdEMvEiz+qsS3V2',
       },
     ],
     iceCandidatePoolSize: 10,
+    iceTransportPolicy: 'all',
   };
 
   onMessage(handler: MessageHandler) {
@@ -189,15 +201,29 @@ class WebRTCManager {
       console.log('ICE gathering state:', this.peerConnection?.iceGatheringState);
     };
 
+    this.peerConnection.onicecandidate = (event) => {
+      if (event.candidate) {
+        console.log('ICE candidate type:', event.candidate.type, 'protocol:', event.candidate.protocol);
+      }
+    };
+
     this.peerConnection.onicecandidateerror = (event) => {
-      console.warn('ICE candidate error:', event);
-      this.emit({ type: 'iceCandidateError', event });
+      // Only log significant errors (not STUN timeouts which are normal)
+      if (event.errorCode !== 701) {
+        console.warn('ICE candidate error:', event.errorCode, event.errorText);
+      }
     };
 
     this.peerConnection.oniceconnectionstatechange = () => {
       const state = this.peerConnection?.iceConnectionState;
       console.log('ICE connection state:', state);
       this.emit({ type: 'connectionState', state });
+      
+      // Attempt ICE restart on disconnection
+      if (state === 'disconnected' || state === 'failed') {
+        console.log('Attempting ICE restart...');
+        this.attemptIceRestart();
+      }
     };
 
     this.peerConnection.onconnectionstatechange = () => {
@@ -205,6 +231,18 @@ class WebRTCManager {
       console.log('Connection state:', state);
       this.emit({ type: 'connectionState', state });
     };
+  }
+  
+  private async attemptIceRestart() {
+    if (!this.peerConnection) return;
+    
+    try {
+      const offer = await this.peerConnection.createOffer({ iceRestart: true });
+      await this.peerConnection.setLocalDescription(offer);
+      console.log('ICE restart initiated');
+    } catch (error) {
+      console.error('ICE restart failed:', error);
+    }
   }
 
   private setupDataChannelHandlers(channel: RTCDataChannel) {
