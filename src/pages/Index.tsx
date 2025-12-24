@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { ConnectionPanel } from '@/components/ConnectionPanel';
 import { TransferPanel } from '@/components/TransferPanel';
-import { Share2 } from 'lucide-react';
+import { Shield, Zap, Wifi, AlertTriangle } from 'lucide-react';
 
 const Index = () => {
   const [isConnected, setIsConnected] = useState(false);
@@ -13,27 +13,31 @@ const Index = () => {
         <div className="absolute top-1/4 -left-32 w-96 h-96 bg-primary/10 rounded-full blur-3xl animate-glow-pulse" />
         <div className="absolute bottom-1/4 -right-32 w-96 h-96 bg-accent/10 rounded-full blur-3xl animate-glow-pulse" style={{ animationDelay: '1s' }} />
         <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[600px] bg-primary/5 rounded-full blur-3xl" />
+        {/* Animated particles */}
+        <div className="absolute top-20 right-20 w-2 h-2 bg-primary/40 rounded-full animate-bounce" style={{ animationDuration: '2s' }} />
+        <div className="absolute top-40 left-1/4 w-3 h-3 bg-accent-foreground/30 rounded-full animate-bounce" style={{ animationDuration: '2.5s', animationDelay: '0.5s' }} />
+        <div className="absolute bottom-32 right-1/3 w-2 h-2 bg-primary/50 rounded-full animate-bounce" style={{ animationDuration: '1.8s', animationDelay: '1s' }} />
       </div>
 
       {/* Header */}
       <header className="relative z-10 p-6">
         <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl bg-primary/20 flex items-center justify-center">
-            <Share2 className="w-5 h-5 text-primary" />
+          <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-primary to-accent-foreground flex items-center justify-center shadow-lg">
+            <Shield className="w-6 h-6 text-primary-foreground" />
           </div>
           <div>
-            <h1 className="text-xl font-semibold text-foreground">
-              P2P Transfer
+            <h1 className="text-2xl font-bold text-foreground tracking-tight">
+              Secure Share
             </h1>
-            <p className="text-xs text-muted-foreground">
-              Secure peer-to-peer file sharing
+            <p className="text-xs text-muted-foreground flex items-center gap-1">
+              <Zap className="w-3 h-3" /> Fast & Fun P2P File Sharing
             </p>
           </div>
         </div>
       </header>
 
       {/* Main content */}
-      <main className="relative z-10 flex-1 flex items-center justify-center px-4 pb-12">
+      <main className="relative z-10 flex-1 flex items-center justify-center px-4 pb-8">
         {!isConnected ? (
           <ConnectionPanel onConnected={() => setIsConnected(true)} />
         ) : (
@@ -41,12 +45,24 @@ const Index = () => {
         )}
       </main>
 
+      {/* WiFi Disclaimer */}
+      <div className="relative z-10 px-6 pb-2">
+        <div className="glass rounded-xl p-3 max-w-md mx-auto flex items-center gap-3 border border-warning/30 bg-warning/5">
+          <div className="w-8 h-8 rounded-lg bg-warning/20 flex items-center justify-center flex-shrink-0">
+            <Wifi className="w-4 h-4 text-warning" />
+          </div>
+          <p className="text-xs text-muted-foreground">
+            <span className="font-semibold text-foreground">Important:</span> Both devices must be connected to the <span className="text-warning font-medium">same WiFi network</span> for file sharing to work.
+          </p>
+        </div>
+      </div>
+
       {/* Footer */}
-      <footer className="relative z-10 p-6 text-center">
+      <footer className="relative z-10 p-4 text-center">
         <p className="text-xs text-muted-foreground">
           Files are transferred directly between devices using WebRTC.
           <br />
-          No data is stored on any server.
+          No data is stored on any server. 🔒
         </p>
       </footer>
     </div>
