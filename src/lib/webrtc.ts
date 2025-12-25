@@ -10,9 +10,9 @@ import {
   type EncryptionKeys,
 } from './crypto';
 
-const CHUNK_SIZE = 262144; // 256KB chunks (max safe size for WebRTC)
-const BUFFER_THRESHOLD = 16 * 1024 * 1024; // 16MB buffer threshold
-const BUFFER_LOW_THRESHOLD = 1 * 1024 * 1024; // Resume at 1MB
+const CHUNK_SIZE = 65536; // 64KB chunks for faster transfer
+const BUFFER_THRESHOLD = 256 * 1024; // 256KB buffer threshold
+const BUFFER_LOW_THRESHOLD = 64 * 1024; // Resume when buffer drops to 64KB
 
 export interface FileTransfer {
   id: string;
