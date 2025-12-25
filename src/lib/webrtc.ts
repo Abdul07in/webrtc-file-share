@@ -10,9 +10,28 @@ import {
   type EncryptionKeys,
 } from './crypto';
 
-const CHUNK_SIZE = 65536; // 64KB chunks for faster transfer
-const BUFFER_THRESHOLD = 256 * 1024; // 256KB buffer threshold
-const BUFFER_LOW_THRESHOLD = 64 * 1024; // Resume when buffer drops to 64KB
+// Dynamic transfer configuration
+interface TransferConfig {
+  chunkSize: number;
+  bufferThreshold: number;
+  bufferLowThreshold: number;
+  maxMessageSize: number;
+  effectiveBandwidth: number; // bytes per second
+  isCalibrated: boolean;
+}
+
+// Default conservative values
+const DEFAULT_CONFIG: TransferConfig = {
+  chunkSize: 16384, // 16KB - conservative default
+  bufferThreshold: 64 * 1024,
+  bufferLowThreshold: 16 * 1024,
+  maxMessageSize: 262144, // 256KB default
+  effectiveBandwidth: 0,
+  isCalibrated: false,
+};
+
+// Calibration test sizes (from small to large)
+const CALIBRATION_SIZES = [16384, 32768, 65536, 131072, 262144]; // 16KB to 256KB
 
 export interface FileTransfer {
   id: string;
@@ -31,14 +50,25 @@ export interface PeerConnection {
   isInitiator: boolean;
 }
 
+export interface ConnectionStats {
+  chunkSize: number;
+  maxMessageSize: number;
+  effectiveBandwidth: number;
+  isCalibrated: boolean;
+  connectionType: string;
+  rtt: number;
+}
+
 type MessageHandler = (message: any) => void;
 type FileHandler = (file: FileTransfer) => void;
+type CalibrationHandler = (stats: ConnectionStats) => void;
 
 class WebRTCManager {
   private peerConnection: RTCPeerConnection | null = null;
   private dataChannel: RTCDataChannel | null = null;
   private messageHandlers: Set<MessageHandler> = new Set();
   private fileHandlers: Set<FileHandler> = new Set();
+  private calibrationHandlers: Set<CalibrationHandler> = new Set();
   private receivedChunks: Map<string, Uint8Array[]> = new Map();
   private receivedMeta: Map<string, { name: string; size: number; type: string }> = new Map();
 
@@ -47,15 +77,15 @@ class WebRTCManager {
   private sharedKey: CryptoKey | null = null;
   private isEncrypted: boolean = false;
 
-  private config: RTCConfiguration = {
+  // Dynamic transfer configuration
+  private transferConfig: TransferConfig = { ...DEFAULT_CONFIG };
+  private isCalibrating: boolean = false;
+  private calibrationResults: Map<string, { size: number; startTime: number }> = new Map();
+
+  private rtcConfig: RTCConfiguration = {
     iceServers: [
-      // Primary STUN server (Google) - highly reliable
       { urls: 'stun:stun.l.google.com:19302' },
-
-      // Secondary STUN server (Twilio) - good fallback
       { urls: 'stun:global.stun.twilio.com:3478' },
-
-      // TURN relay servers from relay.metered.ca (free tier)
       {
         urls: 'turn:global.relay.metered.ca:80',
         username: 'e8dd65b92f6ec01bf7e7c5a3',
@@ -91,6 +121,11 @@ class WebRTCManager {
     return () => this.fileHandlers.delete(handler);
   }
 
+  onCalibration(handler: CalibrationHandler) {
+    this.calibrationHandlers.add(handler);
+    return () => this.calibrationHandlers.delete(handler);
+  }
+
   private emit(message: any) {
     this.messageHandlers.forEach(handler => handler(message));
   }
@@ -99,25 +134,31 @@ class WebRTCManager {
     this.fileHandlers.forEach(handler => handler(file));
   }
 
+  private emitCalibration(stats: ConnectionStats) {
+    this.calibrationHandlers.forEach(handler => handler(stats));
+  }
+
+  getTransferConfig(): TransferConfig {
+    return { ...this.transferConfig };
+  }
+
   async createOffer(): Promise<{ offer: string; publicKey: string }> {
-    // Generate encryption keys
     this.keyPair = await generateKeyPair();
     const publicKeyStr = await exportPublicKey(this.keyPair.publicKey);
 
-    this.peerConnection = new RTCPeerConnection(this.config);
+    this.peerConnection = new RTCPeerConnection(this.rtcConfig);
     this.setupConnectionHandlers();
 
     this.dataChannel = this.peerConnection.createDataChannel('fileTransfer', {
       ordered: true,
       maxRetransmits: 30,
     });
-    this.dataChannel.bufferedAmountLowThreshold = BUFFER_LOW_THRESHOLD;
+    this.dataChannel.bufferedAmountLowThreshold = this.transferConfig.bufferLowThreshold;
     this.setupDataChannelHandlers(this.dataChannel);
 
     const offer = await this.peerConnection.createOffer();
     await this.peerConnection.setLocalDescription(offer);
 
-    // Wait for ICE gathering to complete
     await this.waitForIceGathering();
 
     const sdp = this.peerConnection.localDescription;
@@ -130,7 +171,6 @@ class WebRTCManager {
   async handleOffer(encodedOffer: string, peerPublicKey: string): Promise<{ answer: string; publicKey: string }> {
     const offer = JSON.parse(atob(encodedOffer));
 
-    // Generate our keys and derive shared key
     this.keyPair = await generateKeyPair();
     const publicKeyStr = await exportPublicKey(this.keyPair.publicKey);
 
@@ -138,11 +178,12 @@ class WebRTCManager {
     this.sharedKey = await deriveSharedKey(this.keyPair.privateKey, peerKey);
     this.isEncrypted = true;
 
-    this.peerConnection = new RTCPeerConnection(this.config);
+    this.peerConnection = new RTCPeerConnection(this.rtcConfig);
     this.setupConnectionHandlers();
 
     this.peerConnection.ondatachannel = (event) => {
       this.dataChannel = event.channel;
+      this.dataChannel.bufferedAmountLowThreshold = this.transferConfig.bufferLowThreshold;
       this.setupDataChannelHandlers(this.dataChannel);
     };
 
@@ -162,7 +203,6 @@ class WebRTCManager {
   async handleAnswer(encodedAnswer: string, peerPublicKey: string) {
     const answer = JSON.parse(atob(encodedAnswer));
 
-    // Derive shared key from peer's public key
     if (this.keyPair) {
       const peerKey = await importPublicKey(peerPublicKey);
       this.sharedKey = await deriveSharedKey(this.keyPair.privateKey, peerKey);
@@ -186,14 +226,172 @@ class WebRTCManager {
 
       this.peerConnection.addEventListener('icegatheringstatechange', onStateChange);
 
-      // Many relay candidates (TURN) can take longer than 5s to gather.
-      // We wait up to timeoutMs; if it still isn't complete, we proceed with what we have.
       setTimeout(() => {
         this.peerConnection?.removeEventListener('icegatheringstatechange', onStateChange);
         resolve();
       }, timeoutMs);
     });
   }
+
+  // ============= DYNAMIC CALIBRATION =============
+
+  async calibrateConnection(): Promise<ConnectionStats> {
+    if (!this.dataChannel || this.dataChannel.readyState !== 'open') {
+      throw new Error('Data channel not ready for calibration');
+    }
+
+    this.isCalibrating = true;
+    console.log('Starting connection calibration...');
+    this.emit({ type: 'calibrationStart' });
+
+    try {
+      // Get connection stats first
+      const stats = await this.getConnectionStats();
+      
+      // Determine optimal chunk size through progressive testing
+      let optimalChunkSize = DEFAULT_CONFIG.chunkSize;
+      let maxSuccessfulSize = DEFAULT_CONFIG.chunkSize;
+      let bestBandwidth = 0;
+
+      for (const testSize of CALIBRATION_SIZES) {
+        try {
+          const bandwidth = await this.testChunkSize(testSize);
+          console.log(`Chunk size ${testSize} bytes: ${(bandwidth / 1024 / 1024).toFixed(2)} MB/s`);
+          
+          if (bandwidth > bestBandwidth) {
+            bestBandwidth = bandwidth;
+            optimalChunkSize = testSize;
+            maxSuccessfulSize = testSize;
+          }
+        } catch (error) {
+          console.log(`Chunk size ${testSize} failed, stopping calibration at this size`);
+          break;
+        }
+      }
+
+      // Set optimal configuration based on calibration
+      this.transferConfig = {
+        chunkSize: optimalChunkSize,
+        bufferThreshold: optimalChunkSize * 4, // 4 chunks in buffer
+        bufferLowThreshold: optimalChunkSize, // Resume when 1 chunk left
+        maxMessageSize: maxSuccessfulSize,
+        effectiveBandwidth: bestBandwidth,
+        isCalibrated: true,
+      };
+
+      // Update data channel threshold
+      if (this.dataChannel) {
+        this.dataChannel.bufferedAmountLowThreshold = this.transferConfig.bufferLowThreshold;
+      }
+
+      const connectionStats: ConnectionStats = {
+        chunkSize: this.transferConfig.chunkSize,
+        maxMessageSize: this.transferConfig.maxMessageSize,
+        effectiveBandwidth: this.transferConfig.effectiveBandwidth,
+        isCalibrated: true,
+        connectionType: stats.connectionType,
+        rtt: stats.rtt,
+      };
+
+      console.log('Calibration complete:', connectionStats);
+      this.emit({ type: 'calibrationComplete', stats: connectionStats });
+      this.emitCalibration(connectionStats);
+
+      return connectionStats;
+    } finally {
+      this.isCalibrating = false;
+    }
+  }
+
+  private async testChunkSize(size: number): Promise<number> {
+    return new Promise((resolve, reject) => {
+      if (!this.dataChannel || this.dataChannel.readyState !== 'open') {
+        reject(new Error('Channel not ready'));
+        return;
+      }
+
+      const testId = `calibrate_${size}_${Date.now()}`;
+      const testData = new Uint8Array(size);
+      
+      // Fill with random data for realistic test
+      crypto.getRandomValues(testData);
+
+      const testPacket = new Uint8Array(1 + testId.length + testData.length);
+      const idBytes = new TextEncoder().encode(testId);
+      testPacket[0] = idBytes.length;
+      testPacket.set(idBytes, 1);
+      testPacket.set(testData, 1 + idBytes.length);
+
+      const startTime = performance.now();
+      this.calibrationResults.set(testId, { size, startTime });
+
+      // Set timeout for this test
+      const timeout = setTimeout(() => {
+        this.calibrationResults.delete(testId);
+        reject(new Error(`Chunk size ${size} timed out`));
+      }, 5000);
+
+      // Send calibration request
+      this.dataChannel.send(JSON.stringify({
+        type: 'calibration-ping',
+        id: testId,
+        size,
+      }));
+
+      // Create handler for response
+      const handleMessage = (msg: any) => {
+        if (msg.type === 'calibration-pong' && msg.id === testId) {
+          clearTimeout(timeout);
+          const endTime = performance.now();
+          const rtt = endTime - startTime;
+          const bandwidth = (size * 2) / (rtt / 1000); // Round trip, so x2
+          this.calibrationResults.delete(testId);
+          this.messageHandlers.delete(handleMessage);
+          resolve(bandwidth);
+        }
+      };
+
+      this.messageHandlers.add(handleMessage);
+
+      // Also send the actual binary data to test throughput
+      try {
+        const buffer = new ArrayBuffer(testPacket.length);
+        new Uint8Array(buffer).set(testPacket);
+        this.dataChannel.send(buffer);
+      } catch (error) {
+        clearTimeout(timeout);
+        this.calibrationResults.delete(testId);
+        reject(error);
+      }
+    });
+  }
+
+  private async getConnectionStats(): Promise<{ connectionType: string; rtt: number }> {
+    if (!this.peerConnection) {
+      return { connectionType: 'unknown', rtt: 0 };
+    }
+
+    try {
+      const stats = await this.peerConnection.getStats();
+      let connectionType = 'unknown';
+      let rtt = 0;
+
+      stats.forEach((report) => {
+        if (report.type === 'candidate-pair' && report.state === 'succeeded') {
+          rtt = report.currentRoundTripTime ? report.currentRoundTripTime * 1000 : 0;
+        }
+        if (report.type === 'local-candidate') {
+          connectionType = report.candidateType || 'unknown';
+        }
+      });
+
+      return { connectionType, rtt };
+    } catch {
+      return { connectionType: 'unknown', rtt: 0 };
+    }
+  }
+
+  // ============= CONNECTION HANDLERS =============
 
   private setupConnectionHandlers() {
     if (!this.peerConnection) return;
@@ -209,7 +407,6 @@ class WebRTCManager {
     };
 
     this.peerConnection.onicecandidateerror = (event) => {
-      // Only log significant errors (not STUN timeouts which are normal)
       if (event.errorCode !== 701) {
         console.warn('ICE candidate error:', event.errorCode, event.errorText);
       }
@@ -220,7 +417,6 @@ class WebRTCManager {
       console.log('ICE connection state:', state);
       this.emit({ type: 'connectionState', state });
 
-      // Attempt ICE restart on disconnection
       if (state === 'disconnected' || state === 'failed') {
         console.log('Attempting ICE restart...');
         this.attemptIceRestart();
@@ -273,6 +469,23 @@ class WebRTCManager {
     if (typeof data === 'string') {
       let message = JSON.parse(data);
 
+      // Handle calibration messages
+      if (message.type === 'calibration-ping') {
+        // Respond to calibration ping
+        this.dataChannel?.send(JSON.stringify({
+          type: 'calibration-pong',
+          id: message.id,
+          size: message.size,
+        }));
+        return;
+      }
+
+      if (message.type === 'calibration-pong') {
+        // Let the handler in testChunkSize process this
+        this.emit(message);
+        return;
+      }
+
       // Decrypt metadata if encrypted
       if (message.encrypted && this.sharedKey) {
         try {
@@ -323,16 +536,20 @@ class WebRTCManager {
         this.emit(message);
       }
     } else {
-      // Binary data - file chunk (possibly encrypted)
+      // Binary data - could be calibration or file chunk
       const view = new DataView(data);
       const idLength = view.getUint8(0);
       const decoder = new TextDecoder();
       const id = decoder.decode(new Uint8Array(data, 1, idLength));
 
+      // Skip calibration data
+      if (id.startsWith('calibrate_')) {
+        return;
+      }
+
       let chunk: Uint8Array;
 
       if (this.isEncrypted && this.sharedKey) {
-        // Extract IV (12 bytes) and encrypted data
         const iv = new Uint8Array(data, 1 + idLength, 12);
         const encrypted = new Uint8Array(data, 1 + idLength + 12);
 
@@ -372,6 +589,7 @@ class WebRTCManager {
     }
 
     const id = crypto.randomUUID();
+    const { chunkSize, bufferThreshold } = this.transferConfig;
 
     // Send file metadata (encrypted if available)
     const meta: any = {
@@ -390,29 +608,26 @@ class WebRTCManager {
 
     this.dataChannel.send(JSON.stringify(meta));
 
-    // Read and send file in chunks
+    // Read and send file in chunks using dynamic chunk size
     const buffer = await file.arrayBuffer();
     const data = new Uint8Array(buffer);
     const idBytes = new TextEncoder().encode(id);
 
     let offset = 0;
     while (offset < data.length) {
-      const chunk = data.slice(offset, offset + CHUNK_SIZE);
+      const chunk = data.slice(offset, offset + chunkSize);
 
       let packet: Uint8Array;
 
       if (this.isEncrypted && this.sharedKey) {
-        // Encrypt the chunk
         const { iv, encrypted } = await encryptData(this.sharedKey, chunk);
 
-        // Create packet: idLength(1) + id + iv(12) + encrypted
         packet = new Uint8Array(1 + idBytes.length + 12 + encrypted.length);
         packet[0] = idBytes.length;
         packet.set(idBytes, 1);
         packet.set(iv, 1 + idBytes.length);
         packet.set(encrypted, 1 + idBytes.length + 12);
       } else {
-        // Unencrypted packet
         packet = new Uint8Array(1 + idBytes.length + chunk.length);
         packet[0] = idBytes.length;
         packet.set(idBytes, 1);
@@ -420,7 +635,7 @@ class WebRTCManager {
       }
 
       // Wait for buffer to clear if needed (flow control)
-      if (this.dataChannel.bufferedAmount > BUFFER_THRESHOLD) {
+      if (this.dataChannel.bufferedAmount > bufferThreshold) {
         await new Promise<void>(resolve => {
           const onBufferLow = () => {
             this.dataChannel?.removeEventListener('bufferedamountlow', onBufferLow);
@@ -430,11 +645,10 @@ class WebRTCManager {
         });
       }
 
-      // Create a proper ArrayBuffer copy to avoid SharedArrayBuffer type issues
       const packetBuffer = new ArrayBuffer(packet.length);
       new Uint8Array(packetBuffer).set(packet);
       this.dataChannel.send(packetBuffer);
-      offset += CHUNK_SIZE;
+      offset += chunkSize;
 
       const progress = Math.round((offset / data.length) * 100);
       this.emitFile({
@@ -447,7 +661,6 @@ class WebRTCManager {
       });
     }
 
-    // Send completion message
     this.dataChannel.send(JSON.stringify({
       type: 'file-complete',
       id,
@@ -473,6 +686,10 @@ class WebRTCManager {
     return this.isEncrypted;
   }
 
+  isConnectionCalibrated(): boolean {
+    return this.transferConfig.isCalibrated;
+  }
+
   disconnect() {
     this.dataChannel?.close();
     this.peerConnection?.close();
@@ -483,6 +700,8 @@ class WebRTCManager {
     this.keyPair = null;
     this.sharedKey = null;
     this.isEncrypted = false;
+    this.transferConfig = { ...DEFAULT_CONFIG };
+    this.calibrationResults.clear();
   }
 }
 
