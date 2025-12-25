@@ -10,7 +10,9 @@ import {
   type EncryptionKeys,
 } from './crypto';
 
-const CHUNK_SIZE = 16384; // 16KB chunks
+const CHUNK_SIZE = 65536; // 64KB chunks for faster transfer
+const BUFFER_THRESHOLD = 256 * 1024; // 256KB buffer threshold
+const BUFFER_LOW_THRESHOLD = 64 * 1024; // Resume when buffer drops to 64KB
 
 export interface FileTransfer {
   id: string;
@@ -107,7 +109,9 @@ class WebRTCManager {
 
     this.dataChannel = this.peerConnection.createDataChannel('fileTransfer', {
       ordered: true,
+      maxRetransmits: 30,
     });
+    this.dataChannel.bufferedAmountLowThreshold = BUFFER_LOW_THRESHOLD;
     this.setupDataChannelHandlers(this.dataChannel);
 
     const offer = await this.peerConnection.createOffer();
@@ -415,9 +419,15 @@ class WebRTCManager {
         packet.set(chunk, 1 + idBytes.length);
       }
 
-      // Wait for buffer to clear if needed
-      while (this.dataChannel.bufferedAmount > 1024 * 1024) {
-        await new Promise(resolve => setTimeout(resolve, 10));
+      // Wait for buffer to clear if needed (flow control)
+      if (this.dataChannel.bufferedAmount > BUFFER_THRESHOLD) {
+        await new Promise<void>(resolve => {
+          const onBufferLow = () => {
+            this.dataChannel?.removeEventListener('bufferedamountlow', onBufferLow);
+            resolve();
+          };
+          this.dataChannel?.addEventListener('bufferedamountlow', onBufferLow);
+        });
       }
 
       // Create a proper ArrayBuffer copy to avoid SharedArrayBuffer type issues
