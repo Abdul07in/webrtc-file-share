@@ -2,8 +2,8 @@ import { useState, useEffect, useCallback, useMemo } from 'react';
 import { Button } from '@/components/ui/button';
 import { FileDropZone } from './FileDropZone';
 import { TransferList } from './TransferList';
-import { webrtc, FileTransfer } from '@/lib/webrtc';
-import { Wifi, WifiOff, X, Trophy, Zap, Star, Flame } from 'lucide-react';
+import { webrtc, FileTransfer, ConnectionStats } from '@/lib/webrtc';
+import { Wifi, WifiOff, X, Trophy, Zap, Star, Flame, Gauge, Loader2, CheckCircle2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Progress } from '@/components/ui/progress';
 
@@ -26,6 +26,8 @@ export function TransferPanel({ onDisconnect }: TransferPanelProps) {
   const [sendingFiles, setSendingFiles] = useState<FileTransfer[]>([]);
   const [receivingFiles, setReceivingFiles] = useState<FileTransfer[]>([]);
   const [isConnected, setIsConnected] = useState(true);
+  const [isCalibrating, setIsCalibrating] = useState(false);
+  const [connectionStats, setConnectionStats] = useState<ConnectionStats | null>(null);
   const [totalXP, setTotalXP] = useState(() => {
     const saved = localStorage.getItem('secureShare_xp');
     return saved ? parseInt(saved, 10) : 0;
@@ -61,6 +63,30 @@ export function TransferPanel({ onDisconnect }: TransferPanelProps) {
     localStorage.setItem('secureShare_xp', totalXP.toString());
     localStorage.setItem('secureShare_filesShared', filesShared.toString());
   }, [totalXP, filesShared]);
+
+  // Auto-calibrate connection on mount
+  useEffect(() => {
+    const calibrate = async () => {
+      setIsCalibrating(true);
+      try {
+        const stats = await webrtc.calibrateConnection();
+        setConnectionStats(stats);
+        toast.success('Connection optimized!', {
+          description: `Chunk size: ${(stats.chunkSize / 1024).toFixed(0)}KB, Speed: ${(stats.effectiveBandwidth / 1024 / 1024).toFixed(1)} MB/s`,
+          icon: <Gauge className="w-4 h-4 text-success" />,
+        });
+      } catch (error) {
+        console.error('Calibration failed:', error);
+        toast.error('Using default settings');
+      } finally {
+        setIsCalibrating(false);
+      }
+    };
+
+    // Small delay to ensure connection is stable
+    const timer = setTimeout(calibrate, 500);
+    return () => clearTimeout(timer);
+  }, []);
 
   useEffect(() => {
     const unsubMessage = webrtc.onMessage((msg) => {
@@ -99,9 +125,14 @@ export function TransferPanel({ onDisconnect }: TransferPanelProps) {
       }
     });
 
+    const unsubCalibration = webrtc.onCalibration((stats) => {
+      setConnectionStats(stats);
+    });
+
     return () => {
       unsubMessage();
       unsubFile();
+      unsubCalibration();
     };
   }, [sendingFiles]);
 
@@ -209,6 +240,24 @@ export function TransferPanel({ onDisconnect }: TransferPanelProps) {
               <span className="text-sm font-medium text-destructive">Disconnected</span>
             </div>
           )}
+          
+          {/* Calibration Status */}
+          {isCalibrating ? (
+            <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-warning/10 border border-warning/30">
+              <Loader2 className="w-4 h-4 text-warning animate-spin" />
+              <span className="text-sm font-medium text-warning">Optimizing...</span>
+            </div>
+          ) : connectionStats?.isCalibrated && (
+            <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-primary/10 border border-primary/30">
+              <CheckCircle2 className="w-4 h-4 text-primary" />
+              <span className="text-sm font-medium text-primary">
+                {(connectionStats.chunkSize / 1024).toFixed(0)}KB chunks
+              </span>
+              <span className="text-xs text-muted-foreground">
+                ({(connectionStats.effectiveBandwidth / 1024 / 1024).toFixed(1)} MB/s)
+              </span>
+            </div>
+          )}
         </div>
         <Button
           variant="ghost"
@@ -223,7 +272,7 @@ export function TransferPanel({ onDisconnect }: TransferPanelProps) {
 
       <FileDropZone
         onFilesSelected={handleFilesSelected}
-        disabled={!isConnected}
+        disabled={!isConnected || isCalibrating}
       />
 
       <div className="mt-6 space-y-6">
