@@ -49,14 +49,15 @@ export function ConnectionPanel({ onConnected }: ConnectionPanelProps) {
       }
 
       setMode('connecting');
-      const { answer, publicKey } = await webrtc.handleOffer(room.offer, (room as any).public_key);
+      const { answer, publicKey } = await webrtc.handleOffer(room.offer, (room as { public_key: string }).public_key);
 
       await supabase
         .from('rooms')
         .update({ answer: answer, peer_public_key: publicKey })
         .eq('pin', joinPin);
 
-      webrtc.onMessage((msg) => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      webrtc.onMessage((msg: any) => {
         if (msg.type === 'channelOpen') {
           toast.success('Connected with E2E encryption!');
           onConnected();
@@ -91,7 +92,8 @@ export function ConnectionPanel({ onConnected }: ConnectionPanelProps) {
       setMyPublicKey(publicKey);
       setMode('waiting');
 
-      webrtc.onMessage((msg) => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      webrtc.onMessage((msg: any) => {
         if (msg.type === 'channelOpen') {
           toast.success('Connected with E2E encryption!');
           onConnected();
@@ -119,7 +121,7 @@ export function ConnectionPanel({ onConnected }: ConnectionPanelProps) {
           filter: `pin=eq.${myPin}`,
         },
         async (payload) => {
-          const { answer, peer_public_key } = payload.new as any;
+          const { answer, peer_public_key } = payload.new as { answer: string; peer_public_key: string };
           if (answer && peer_public_key) {
             try {
               await webrtc.handleAnswer(answer, peer_public_key);

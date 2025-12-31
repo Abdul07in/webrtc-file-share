@@ -59,7 +59,7 @@ export interface ConnectionStats {
   rtt: number;
 }
 
-type MessageHandler = (message: any) => void;
+type MessageHandler = (message: unknown) => void;
 type FileHandler = (file: FileTransfer) => void;
 type CalibrationHandler = (stats: ConnectionStats) => void;
 
@@ -126,7 +126,7 @@ class WebRTCManager {
     return () => this.calibrationHandlers.delete(handler);
   }
 
-  private emit(message: any) {
+  private emit(message: unknown) {
     this.messageHandlers.forEach(handler => handler(message));
   }
 
@@ -247,7 +247,7 @@ class WebRTCManager {
     try {
       // Get connection stats first
       const stats = await this.getConnectionStats();
-      
+
       // Determine optimal chunk size through progressive testing
       let optimalChunkSize = DEFAULT_CONFIG.chunkSize;
       let maxSuccessfulSize = DEFAULT_CONFIG.chunkSize;
@@ -257,7 +257,7 @@ class WebRTCManager {
         try {
           const bandwidth = await this.testChunkSize(testSize);
           console.log(`Chunk size ${testSize} bytes: ${(bandwidth / 1024 / 1024).toFixed(2)} MB/s`);
-          
+
           if (bandwidth > bestBandwidth) {
             bestBandwidth = bandwidth;
             optimalChunkSize = testSize;
@@ -312,7 +312,7 @@ class WebRTCManager {
 
       const testId = `calibrate_${size}_${Date.now()}`;
       const testData = new Uint8Array(size);
-      
+
       // Fill with random data for realistic test
       crypto.getRandomValues(testData);
 
@@ -339,6 +339,7 @@ class WebRTCManager {
       }));
 
       // Create handler for response
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const handleMessage = (msg: any) => {
         if (msg.type === 'calibration-pong' && msg.id === testId) {
           clearTimeout(timeout);
@@ -467,7 +468,8 @@ class WebRTCManager {
 
   private async handleIncomingMessage(data: ArrayBuffer | string) {
     if (typeof data === 'string') {
-      let message = JSON.parse(data);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const message: any = JSON.parse(data);
 
       // Handle calibration messages
       if (message.type === 'calibration-ping') {
@@ -592,6 +594,7 @@ class WebRTCManager {
     const { chunkSize, bufferThreshold } = this.transferConfig;
 
     // Send file metadata (encrypted if available)
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const meta: any = {
       type: 'file-meta',
       id,

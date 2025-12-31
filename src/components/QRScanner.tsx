@@ -36,12 +36,12 @@ export function QRScanner({ onScan, onClose }: QRScannerProps) {
               onScan(decodedText);
             }
           },
-          () => {} // Ignore scan failures
+          () => { } // Ignore scan failures
         );
         setIsStarting(false);
-      } catch (err: any) {
+      } catch (err: unknown) {
         console.error('Failed to start scanner:', err);
-        setError(err?.message || 'Camera access denied');
+        setError((err as Error)?.message || 'Camera access denied');
         setIsStarting(false);
       }
     };
