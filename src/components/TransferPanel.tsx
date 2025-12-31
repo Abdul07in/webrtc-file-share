@@ -142,7 +142,7 @@ export function TransferPanel({ onDisconnect }: TransferPanelProps) {
     setTotalXP(prev => prev + earned);
     setFilesShared(prev => prev + 1);
     setStreak(prev => prev + 1);
-    
+
     // Show XP toast with animation effect
     toast.success(`+${earned} XP earned!`, {
       icon: <Zap className="w-4 h-4 text-warning" />,
@@ -162,7 +162,7 @@ export function TransferPanel({ onDisconnect }: TransferPanelProps) {
           progress: 0,
           status: 'pending',
         }]);
-        
+
         await webrtc.sendFile(file);
         addXP(file.size);
         toast.success(`Sent ${file.name}`);
@@ -182,25 +182,23 @@ export function TransferPanel({ onDisconnect }: TransferPanelProps) {
   const LevelIcon = currentLevel.icon;
 
   return (
-    <div className="glass rounded-2xl p-6 max-w-2xl w-full mx-4">
+    <div className="glass rounded-2xl p-4 md:p-6 max-w-2xl w-full mx-auto">
       {/* Gamification Stats Bar */}
-      <div className="mb-6 p-4 rounded-xl bg-gradient-to-r from-primary/10 via-accent/10 to-primary/10 border border-primary/20">
-        <div className="flex items-center justify-between mb-3">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-primary to-accent-foreground flex items-center justify-center shadow-lg">
-              <LevelIcon className="w-5 h-5 text-primary-foreground" />
-            </div>
-            <div>
-              <div className="flex items-center gap-2">
-                <span className="font-bold text-foreground">{currentLevel.name}</span>
-                <span className="text-xs px-2 py-0.5 rounded-full bg-primary/20 text-primary font-medium">
-                  Lvl {currentLevel.level}
-                </span>
-              </div>
-              <p className="text-xs text-muted-foreground">{totalXP} XP total</p>
-            </div>
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between mb-3 gap-3">
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-primary to-accent-foreground flex items-center justify-center shadow-lg shrink-0">
+            <LevelIcon className="w-5 h-5 text-primary-foreground" />
           </div>
-          <div className="text-right">
+          <div>
+            <div className="flex items-center gap-2">
+              <span className="font-bold text-foreground">{currentLevel.name}</span>
+              <span className="text-xs px-2 py-0.5 rounded-full bg-primary/20 text-primary font-medium">
+                Lvl {currentLevel.level}
+              </span>
+            </div>
+            <p className="text-xs text-muted-foreground">{totalXP} XP total</p>
+          </div>
+          <div className="text-left sm:text-right">
             <div className="flex items-center gap-2 text-sm">
               <Trophy className="w-4 h-4 text-warning" />
               <span className="font-semibold text-foreground">{filesShared}</span>
@@ -226,8 +224,8 @@ export function TransferPanel({ onDisconnect }: TransferPanelProps) {
       </div>
 
       {/* Connection Status */}
-      <div className="flex items-center justify-between mb-6">
-        <div className="flex items-center gap-3">
+      <div className="flex flex-col-reverse sm:flex-row sm:items-center justify-between mb-6 gap-3">
+        <div className="flex flex-wrap items-center gap-3">
           {isConnected ? (
             <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-success/10 border border-success/30">
               <div className="w-2 h-2 rounded-full bg-success animate-pulse" />
@@ -240,7 +238,7 @@ export function TransferPanel({ onDisconnect }: TransferPanelProps) {
               <span className="text-sm font-medium text-destructive">Disconnected</span>
             </div>
           )}
-          
+
           {/* Calibration Status */}
           {isCalibrating ? (
             <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-warning/10 border border-warning/30">
@@ -263,7 +261,7 @@ export function TransferPanel({ onDisconnect }: TransferPanelProps) {
           variant="ghost"
           size="sm"
           onClick={handleDisconnect}
-          className="text-muted-foreground hover:text-destructive hover:bg-destructive/10"
+          className="text-muted-foreground hover:text-destructive hover:bg-destructive/10 w-full sm:w-auto"
         >
           <X className="w-4 h-4 mr-1" />
           Disconnect

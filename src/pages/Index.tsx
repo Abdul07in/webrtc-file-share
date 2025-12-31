@@ -11,7 +11,7 @@ const Index = () => {
     <div className="min-h-screen bg-background flex flex-col transition-colors duration-500 ease-out">
       {/* Background effects */}
       <div className="fixed inset-0 overflow-hidden pointer-events-none">
-        <div className="absolute top-1/4 -left-32 w-96 h-96 bg-primary/10 rounded-full blur-3xl animate-glow-pulse will-change-transform" />
+        <div className="absolute top-1/4 -left-32 w-64 h-64 md:w-96 md:h-96 bg-primary/10 rounded-full blur-3xl animate-glow-pulse will-change-transform" />
         <div className="absolute bottom-1/4 -right-32 w-96 h-96 bg-accent/10 rounded-full blur-3xl animate-glow-pulse will-change-transform" style={{ animationDelay: '1s' }} />
         <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[600px] bg-primary/5 rounded-full blur-3xl will-change-transform" />
         {/* Animated particles */}
@@ -21,17 +21,17 @@ const Index = () => {
       </div>
 
       {/* Header */}
-      <header className="relative z-10 p-6">
+      <header className="relative z-10 p-4 md:p-6">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3 group">
-            <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-primary to-accent-foreground flex items-center justify-center shadow-lg transition-transform duration-300 ease-out group-hover:scale-110 group-hover:rotate-3">
-              <Shield className="w-6 h-6 text-primary-foreground transition-transform duration-300 ease-out" />
+            <div className="w-10 h-10 md:w-12 md:h-12 rounded-xl bg-gradient-to-br from-primary to-accent-foreground flex items-center justify-center shadow-lg transition-transform duration-300 ease-out group-hover:scale-110 group-hover:rotate-3">
+              <Shield className="w-5 h-5 md:w-6 md:h-6 text-primary-foreground transition-transform duration-300 ease-out" />
             </div>
             <div>
-              <h1 className="text-2xl font-bold text-foreground tracking-tight transition-colors duration-300">
+              <h1 className="text-xl md:text-2xl font-bold text-foreground tracking-tight transition-colors duration-300">
                 Secure Share
               </h1>
-              <p className="text-xs text-muted-foreground flex items-center gap-1 transition-colors duration-300">
+              <p className="text-[10px] md:text-xs text-muted-foreground flex items-center gap-1 transition-colors duration-300">
                 <Zap className="w-3 h-3" /> Fast & Fun P2P File Sharing
               </p>
             </div>
@@ -41,7 +41,7 @@ const Index = () => {
       </header>
 
       {/* Main content */}
-      <main className="relative z-10 flex-1 flex items-center justify-center px-4 pb-8">
+      <main className="relative z-10 flex-1 flex items-center justify-center px-4 pb-8 md:pb-12">
         {!isConnected ? (
           <ConnectionPanel onConnected={() => setIsConnected(true)} />
         ) : (

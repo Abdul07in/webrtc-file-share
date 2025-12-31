@@ -50,7 +50,7 @@ export function ConnectionPanel({ onConnected }: ConnectionPanelProps) {
 
       setMode('connecting');
       const { answer, publicKey } = await webrtc.handleOffer(room.offer, (room as any).public_key);
-      
+
       await supabase
         .from('rooms')
         .update({ answer: answer, peer_public_key: publicKey })
@@ -80,17 +80,17 @@ export function ConnectionPanel({ onConnected }: ConnectionPanelProps) {
     try {
       const newPin = generatePin();
       const { offer, publicKey } = await webrtc.createOffer();
-      
+
       const { error } = await supabase
         .from('rooms')
         .insert({ pin: newPin, offer: offer, public_key: publicKey });
-      
+
       if (error) throw error;
-      
+
       setMyPin(newPin);
       setMyPublicKey(publicKey);
       setMode('waiting');
-      
+
       webrtc.onMessage((msg) => {
         if (msg.type === 'channelOpen') {
           toast.success('Connected with E2E encryption!');
@@ -158,13 +158,13 @@ export function ConnectionPanel({ onConnected }: ConnectionPanelProps) {
             onClose={() => setShowScanner(false)}
           />
         )}
-        <div className="glass rounded-2xl p-8 max-w-md w-full mx-4">
+        <div className="glass rounded-2xl p-5 md:p-8 max-w-md w-full mx-auto">
           <h2 className="text-2xl font-semibold text-foreground mb-2 text-center">
             Start Transfer
           </h2>
           <div className="flex items-center justify-center gap-2 mb-6">
-            <Shield className="w-4 h-4 text-success" />
-            <span className="text-sm text-muted-foreground">End-to-end encrypted</span>
+            <Shield className="w-3 h-3 md:w-4 md:h-4 text-success" />
+            <span className="text-xs md:text-sm text-muted-foreground">End-to-end encrypted</span>
           </div>
           <div className="space-y-6">
             <Button
@@ -174,7 +174,7 @@ export function ConnectionPanel({ onConnected }: ConnectionPanelProps) {
               <Link2 className="w-5 h-5 mr-2" />
               Create Room
             </Button>
-            
+
             <div className="relative">
               <div className="absolute inset-0 flex items-center">
                 <div className="w-full border-t border-border"></div>
@@ -183,7 +183,7 @@ export function ConnectionPanel({ onConnected }: ConnectionPanelProps) {
                 <span className="px-4 bg-card text-muted-foreground">or join with PIN</span>
               </div>
             </div>
-            
+
             <div className="flex flex-col items-center gap-4">
               <InputOTP
                 maxLength={6}
@@ -199,7 +199,7 @@ export function ConnectionPanel({ onConnected }: ConnectionPanelProps) {
                   <InputOTPSlot index={5} />
                 </InputOTPGroup>
               </InputOTP>
-              
+
               <div className="flex gap-2 w-full">
                 <Button
                   onClick={() => setShowScanner(true)}
@@ -226,7 +226,7 @@ export function ConnectionPanel({ onConnected }: ConnectionPanelProps) {
 
   if (mode === 'creating' || mode === 'joining') {
     return (
-      <div className="glass rounded-2xl p-8 max-w-md w-full mx-4 text-center">
+      <div className="glass rounded-2xl p-6 md:p-8 max-w-md w-full mx-auto text-center">
         <Loader2 className="w-12 h-12 mx-auto mb-4 text-primary animate-spin" />
         <p className="text-foreground">
           {mode === 'creating' ? 'Creating secure room...' : 'Joining room...'}
@@ -237,19 +237,19 @@ export function ConnectionPanel({ onConnected }: ConnectionPanelProps) {
 
   if (mode === 'waiting') {
     return (
-      <div className="glass rounded-2xl p-8 max-w-md w-full mx-4 text-center">
+      <div className="glass rounded-2xl p-6 md:p-8 max-w-md w-full mx-auto text-center">
         <div className="flex items-center justify-center gap-2 mb-4">
           <Shield className="w-5 h-5 text-success" />
           <span className="text-sm text-success font-medium">E2E Encryption Ready</span>
         </div>
-        
+
         <h2 className="text-xl font-semibold text-foreground mb-2">
           Share to Connect
         </h2>
         <p className="text-sm text-muted-foreground mb-6">
           Scan QR or enter PIN to connect
         </p>
-        
+
         {/* QR Code Toggle */}
         <div className="flex justify-center gap-2 mb-4">
           <Button
@@ -268,18 +268,18 @@ export function ConnectionPanel({ onConnected }: ConnectionPanelProps) {
             PIN
           </Button>
         </div>
-        
+
         {showQR ? (
           <div className="bg-white p-4 rounded-xl inline-block mb-4">
-            <QRCodeSVG 
-              value={qrData} 
+            <QRCodeSVG
+              value={qrData}
               size={180}
               level="M"
               includeMargin={false}
             />
           </div>
         ) : (
-          <div 
+          <div
             onClick={copyPin}
             className="inline-flex items-center gap-3 bg-secondary/50 rounded-xl px-6 py-4 cursor-pointer hover:bg-secondary/70 transition-colors mb-4"
           >
@@ -293,11 +293,11 @@ export function ConnectionPanel({ onConnected }: ConnectionPanelProps) {
             )}
           </div>
         )}
-        
+
         <p className="text-xs text-muted-foreground mb-4">
           PIN: <span className="font-mono font-semibold">{myPin}</span>
         </p>
-        
+
         <div className="flex items-center justify-center gap-2 text-muted-foreground">
           <Loader2 className="w-4 h-4 animate-spin" />
           <span className="text-sm">Waiting for peer...</span>
@@ -307,7 +307,7 @@ export function ConnectionPanel({ onConnected }: ConnectionPanelProps) {
   }
 
   return (
-    <div className="glass rounded-2xl p-8 max-w-md w-full mx-4 text-center">
+    <div className="glass rounded-2xl p-6 md:p-8 max-w-md w-full mx-auto text-center">
       <Loader2 className="w-12 h-12 mx-auto mb-4 text-primary animate-spin" />
       <p className="text-foreground">Establishing secure connection...</p>
     </div>
